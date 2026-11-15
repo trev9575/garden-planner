@@ -1,0 +1,15 @@
+services:
+  garden-planner:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/garden-planner:latest
+    # or build from source instead of pulling:
+    # build: .
+    container_name: garden-planner
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /mnt/user/appdata/garden-planner:/data
+    environment:
+      - ALLOW_REGISTRATION=true   # the admin can also change this in the app
+      # - TRUST_PROXY=true        # set when behind Nginx Proxy Manager / SWAG / Cloudflare tunnel
+      # - COOKIE_SECURE=true      # set when you only access it over HTTPS

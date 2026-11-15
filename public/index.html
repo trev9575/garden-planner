@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Garden Planner</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <meta name="theme-color" content="#23301f">
+</head>
+<body>
+  <!-- Sign in / register -->
+  <section id="auth" class="auth hidden">
+    <form id="authForm" class="auth-card" autocomplete="on">
+      <h1><span aria-hidden="true">🌱</span> Garden Planner</h1>
+      <p class="lede" id="authLede">Sign in to your garden plans.</p>
+      <label class="field hidden" id="displayNameField"><span>Your name</span><input type="text" name="displayName" maxlength="40" autocomplete="name"></label>
+      <label class="field"><span>Username</span><input type="text" name="username" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>Password</span><input type="password" name="password" required autocomplete="current-password" minlength="8"></label>
+      <p class="error" id="authError" role="alert"></p>
+      <button class="btn primary" type="submit" id="authSubmit">Sign in</button>
+      <p class="auth-switch" id="authSwitch"></p>
+    </form>
+  </section>
+
+  <!-- Main app -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <button class="btn ghost icon only-narrow" id="toggleSide" title="Plants and objects" aria-label="Show plants and objects">☰</button>
+      <div class="brand hide-sm"><span aria-hidden="true">🌱</span><span class="hide-md">Garden Planner</span></div>
+      <button class="btn ghost plan-btn" id="planBtn" title="Switch plan">My garden ▾</button>
+      <span class="sep hide-sm"></span>
+      <div class="views" role="tablist" aria-label="View">
+        <button role="tab" data-view="layout" aria-selected="true">Layout</button>
+        <button role="tab" data-view="calendar" aria-selected="false">Calendar</button>
+        <button role="tab" data-view="list" aria-selected="false">Plant list</button>
+      </div>
+      <span class="sep hide-sm"></span>
+      <div class="row hide-sm" id="layoutTools" style="gap:2px">
+        <button class="btn ghost icon" id="toolSelect" title="Select and move (V)" aria-pressed="true">⬚</button>
+        <button class="btn ghost icon" id="toolHand" title="Pan (H or hold Space)" aria-pressed="false">✋</button>
+        <button class="btn ghost icon" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
+        <button class="btn ghost icon" id="redoBtn" title="Redo (Ctrl+Shift+Z)">↷</button>
+        <button class="btn ghost icon" id="zoomOut" title="Zoom out (−)">−</button>
+        <span class="zoom-label num" id="zoomLabel">100%</span>
+        <button class="btn ghost icon" id="zoomIn" title="Zoom in (+)">+</button>
+        <button class="btn ghost icon" id="zoomFit" title="Fit garden to screen (0)">⤢</button>
+      </div>
+      <div class="spacer"></div>
+      <span class="sync hide-md" id="syncStatus">Live</span>
+      <div class="presence" id="presence"></div>
+      <button class="btn ghost" id="shareBtn" title="Share this plan">Share</button>
+      <button class="btn ghost icon" id="settingsBtn" title="Plan settings" aria-label="Plan settings">⚙</button>
+      <button class="btn ghost icon" id="exportBtn" title="Download image of the plan" aria-label="Download image">⤓</button>
+      <button class="btn ghost" id="userBtn" title="Account"></button>
+      <button class="btn ghost icon only-narrow" id="toggleInsp" title="Details" aria-label="Show details">ⓘ</button>
+    </header>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-lib="plants" aria-selected="true">Plants</button>
+        <button role="tab" data-lib="objects" aria-selected="false">Beds &amp; objects</button>
+      </div>
+      <div class="side-tools" id="plantTools">
+        <input type="search" id="cropSearch" placeholder="Search plants" aria-label="Search plants">
+        <div class="chips" id="cropChips"></div>
+      </div>
+      <div class="lib" id="lib"></div>
+      <div class="lib-foot" id="libFoot"><button class="btn" id="newCropBtn">Add a custom plant</button></div>
+    </aside>
+
+    <main class="main" id="main">
+      <svg id="canvas" xmlns="http://www.w3.org/2000/svg" aria-label="Garden layout">
+        <defs id="defs"></defs>
+        <g id="world">
+          <g id="ground"></g>
+          <g id="items"></g>
+          <g id="overlay"></g>
+        </g>
+      </svg>
+      <div class="place-hint hidden" id="placeHint"></div>
+      <div class="view-pane hidden" id="calendarView"></div>
+      <div class="view-pane hidden" id="listView"></div>
+      <div class="view-pane hidden" id="noPlan"></div>
+    </main>
+
+    <aside class="inspector" id="inspector"></aside>
+  </div>
+
+  <dialog class="modal" id="modal"></dialog>
+  <div class="tooltip hidden" id="tooltip"></div>
+  <div class="toast hidden" id="toast" role="status"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "garden-planner",
+  "version": "1.0.0",
+  "description": "Self-hosted, multi-user garden layout planner with live collaboration",
+  "main": "server.js",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "dev": "DATA_DIR=./data node --no-warnings --watch server.js"
+  }
+}
