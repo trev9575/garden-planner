@@ -38,6 +38,7 @@ const S = {
   crops: new Map(), companions: {},
   plans: [], plan: null, role: null, members: [],
   items: new Map(),
+  seeds: new Map(),
   sel: new Set(),
   tool: 'select', placing: null, // {kind:'crop', id} | {kind:'object', type}
   view: { x: 40, y: 40, k: 2 },
@@ -185,6 +186,7 @@ async function openPlan(id) {
   const r = await api('GET', `/api/plans/${id}`);
   S.plan = r.plan; S.role = r.plan.role; S.members = r.members;
   S.items = new Map(r.items.map((i) => [i.id, i]));
+  S.seeds = new Map((r.seeds || []).map((x) => [x.id, x]));
   for (const c of r.crops) S.crops.set(c.id, c);
   S.sel.clear(); S.undo = []; S.redo = []; S.cursors.clear(); S.placing = null;
   localStorage.setItem('gp_last_plan', id);
@@ -202,6 +204,7 @@ async function reloadPlanData() {
     const r = await api('GET', `/api/plans/${S.plan.id}`);
     S.plan = r.plan; S.role = r.plan.role; S.members = r.members;
     S.items = new Map(r.items.map((i) => [i.id, i]));
+    S.seeds = new Map((r.seeds || []).map((x) => [x.id, x]));
     for (const c of r.crops) S.crops.set(c.id, c);
     for (const id of [...S.sel]) if (!S.items.has(id)) S.sel.delete(id);
     $('#planBtn').textContent = `${S.plan.name} ▾`;
@@ -246,6 +249,16 @@ function connectLive(planId) {
     S.plan = { ...S.plan, ...d.plan, role: S.role };
     $('#planBtn').textContent = `${S.plan.name} ▾`;
     scheduleRender(); refreshSideViews();
+  });
+  on('seeds', (d) => {
+    if (d.clientId === S.clientId) return;
+    for (const r of d.seeds) S.seeds.set(r.id, r);
+    refreshSideViews();
+  });
+  on('seeds-delete', (d) => {
+    if (d.clientId === S.clientId) return;
+    for (const id of d.ids) S.seeds.delete(id);
+    refreshSideViews();
   });
   on('crop', (d) => { S.crops.set(d.crop.id, d.crop); scheduleRender(); });
   on('members', (d) => {
@@ -939,7 +952,7 @@ function renderInspector() {
       <p class="lib-meta" style="margin:6px 0 0">${g.cols} × ${g.rows} at ${fmtLen(g.s)} apart${S.plan.mode === 'sfg' ? '' : `, rows ${fmtLen(g.rs)} apart`} · ${r2(it.w * it.h / 144)} sq ft</p>
       ${n.overlap ? '<p class="error" style="margin:8px 0 0">This planting overlaps another one.</p>' : ''}</div>
     <div class="insp-sec"><h3>Planting</h3>
-      <label class="field"><span>Variety</span><input type="text" data-prop="variety" value="${esc(p.variety || '')}" placeholder="e.g. Cherokee Purple" ${dis}></label>
+      <label class="field"><span>Variety</span><input type="text" data-prop="variety" list="varList" value="${esc(p.variety || '')}" placeholder="e.g. Cherokee Purple" ${dis}><datalist id="varList">${[...new Set([...S.seeds.values()].filter((r) => r.cropId === it.cropId && r.variety).map((r) => r.variety))].map((v) => `<option value="${esc(v)}">`).join('')}</datalist></label>
       ${sizeFields(it, dis)}
       <div class="grid2"><label class="field"><span>Spacing (in)</span><input type="number" min="0.5" step="0.5" data-prop="spacing" value="${p.spacing ?? ''}" placeholder="${c.spacing}" ${dis}></label>
       <label class="field"><span>Row spacing (in)</span><input type="number" min="0.5" step="0.5" data-prop="rowSpacing" value="${p.rowSpacing ?? ''}" placeholder="${c.rowSpacing}" ${dis || (S.plan.mode === 'sfg' ? 'disabled title="Square foot mode uses the same spacing both ways"' : '')}></label></div>
@@ -1055,8 +1068,10 @@ function setView(v) {
   $$('.views [data-view]').forEach((b) => b.setAttribute('aria-selected', b.dataset.view === v));
   $('#calendarView').classList.toggle('hidden', v !== 'calendar' || !S.plan);
   $('#listView').classList.toggle('hidden', v !== 'list' || !S.plan);
+  $('#seedsView').classList.toggle('hidden', v !== 'seeds' || !S.plan);
   $('#noPlan').classList.toggle('hidden', !!S.plan);
   $('#layoutTools').style.visibility = v === 'layout' ? 'visible' : 'hidden';
+  $('#app').classList.toggle('wide-view', v !== 'layout' && !!S.plan);
   if (v !== 'layout') S.placing = null;
   refreshSideViews(); scheduleRender();
 }
@@ -1065,7 +1080,15 @@ function refreshSideViews() {
   if (!S.plan) return;
   if (S.viewMode === 'calendar') renderCalendar();
   if (S.viewMode === 'list') renderList();
+  if (S.viewMode === 'seeds') {
+    if (document.activeElement?.closest('#seedsView')) seedsDirty = true; // don't yank focus mid-edit
+    else renderSeeds();
+  }
 }
+let seedsDirty = false;
+$('#seedsView').addEventListener('focusout', () => setTimeout(() => {
+  if (seedsDirty && !document.activeElement?.closest('#seedsView')) { seedsDirty = false; renderSeeds(); }
+}, 0));
 
 function plantTally() {
   const m = new Map();
@@ -1133,6 +1156,142 @@ function renderCalendar() {
     : '<div class="empty"><h2>Nothing planted yet</h2><p>Place plants on the layout and their sowing and harvest windows show up here.</p></div>'}</div>`;
   $('#calEdit').addEventListener('click', () => planDialog(p));
   $('#calPrint').addEventListener('click', () => window.print());
+}
+
+// ---------------------------------------------------------------- seed starting tracker
+const METHOD_LABEL = { indoor: 'Start indoors', direct: 'Direct sow', buy: 'Buy plants' };
+const defaultMethod = (c) => { const t = c.timing || {}; return t.indoor ? 'indoor' : t.direct ? 'direct' : 'buy'; };
+const defaultSow = (needed, method) => (method === 'buy' ? needed : Math.ceil(needed * 1.3));
+const seedKey = (cropId, variety) => `${cropId}|${(variety || '').trim().toLowerCase()}`;
+function seedNeeds() {
+  const m = new Map();
+  for (const r of plantTally()) if (r.crop.id) m.set(seedKey(r.crop.id, r.variety), { crop: r.crop, variety: r.variety, plants: r.plants });
+  return m;
+}
+function saveSeeds(rows) {
+  if (!canEdit() || !rows.length) return;
+  for (const r of rows) S.seeds.set(r.id, r);
+  api('POST', `/api/plans/${S.plan.id}/seeds`, { seeds: rows, clientId: S.clientId }).catch((e) => { toast(`Couldn't save: ${e.message}`, true); reloadPlanData(); });
+}
+function deleteSeeds(ids) {
+  if (!canEdit()) return;
+  for (const id of ids) S.seeds.delete(id);
+  api('POST', `/api/plans/${S.plan.id}/seeds/delete`, { ids, clientId: S.clientId }).catch((e) => toast(e.message, true));
+}
+function seedWindow(c, method) {
+  const tl = cropTimeline(c); if (!tl) return null;
+  return method === 'indoor' ? tl.indoor : method === 'direct' ? tl.direct : tl.transplant;
+}
+function addSeedsFromLayout() {
+  const have = new Set([...S.seeds.values()].map((r) => seedKey(r.cropId, r.variety)));
+  const rows = [];
+  for (const n of seedNeeds().values()) {
+    if (have.has(seedKey(n.crop.id, n.variety))) continue;
+    const method = defaultMethod(n.crop);
+    rows.push({ id: uid(), cropId: n.crop.id, variety: n.variety, method, sow: defaultSow(n.plants, method), sownDate: null, germinated: null, transplanted: null, source: '', notes: '' });
+  }
+  if (!rows.length) return toast('Everything in the layout is already on the list');
+  saveSeeds(rows); renderSeeds(); toast(`Added ${rows.length} variet${rows.length === 1 ? 'y' : 'ies'} from the layout`);
+}
+function renderSeeds() {
+  const pane = $('#seedsView'); if (!S.plan) return;
+  const dis = canEdit() ? '' : 'disabled';
+  const needs = seedNeeds();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const rows = [...S.seeds.values()].map((r) => {
+    const c = S.crops.get(r.cropId) || cropOf({});
+    const win = seedWindow(c, r.method);
+    return { r, c, win, need: needs.get(seedKey(r.cropId, r.variety))?.plants ?? null };
+  }).sort((a, b) => (a.win?.[0] ?? Infinity) - (b.win?.[0] ?? Infinity) || a.c.name.localeCompare(b.c.name) || (a.r.variety || '').localeCompare(b.r.variety || ''));
+  const have = new Set([...S.seeds.values()].map((r) => seedKey(r.cropId, r.variety)));
+  const missing = [...needs.entries()].filter(([k]) => !have.has(k)).map(([, n]) => n);
+  const tot = rows.reduce((a, { r }) => {
+    if (r.method === 'buy') { a.buy += r.sow || 0; return a; }
+    a.sow += r.sow || 0; if (r.sownDate) { a.sown += r.sow || 0; a.germ += r.germinated || 0; } a.out += r.transplanted || 0; return a;
+  }, { sow: 0, sown: 0, germ: 0, out: 0, buy: 0 });
+  const status = (r) => {
+    if (r.method === 'buy') return r.transplanted ? '<span class="status out">Planted</span>' : '<span class="status">To buy</span>';
+    if (r.transplanted) return `<span class="status out">${r.method === 'direct' ? 'Thinned' : 'Planted out'}</span>`;
+    if (r.germinated) return `<span class="status up">Sprouted${r.sow ? ` ${Math.round(r.germinated / r.sow * 100)}%` : ''}</span>`;
+    if (r.sownDate) return '<span class="status sown">Sown</span>';
+    return '<span class="status">Not sown</span>';
+  };
+  const winHtml = ({ r, win }) => {
+    if (!win) return `<span class="window">${S.plan.lastFrost ? '—' : '<button class="linkish" data-act="frost">Set frost dates</button>'}</span>`;
+    let cls = '';
+    if (!r.sownDate && r.method !== 'buy') { if (today > win[1]) cls = 'late'; else if (today >= win[0]) cls = 'now'; }
+    return `<span class="window ${cls}" title="${cls === 'late' ? 'Past the usual window' : cls === 'now' ? 'In the window now' : ''}">${fmtDate(win[0])} – ${fmtDate(win[1])}</span>`;
+  };
+  const varOpts = (cropId) => [...new Set([...S.items.values()].filter((i) => i.cropId === cropId && i.props?.variety).map((i) => i.props.variety))];
+  pane.innerHTML = `<div class="sheet wide"><div class="sheet-head"><div><h2>Seed starting</h2><p>${esc(S.plan.name)} · how many of each variety to sow, and how they're doing</p></div>
+    <div class="btn-row">${dis ? '' : '<button class="btn" id="seedFromLayout">Add from layout</button><button class="btn primary" id="seedAdd">Add a variety</button>'}<button class="btn" id="seedCsv">Download CSV</button><button class="btn" id="seedPrint">Print</button></div></div>
+    ${missing.length && !dis ? `<div class="callout"><span>${missing.length} planting${missing.length === 1 ? '' : 's'} in your layout ${missing.length === 1 ? "isn't" : "aren't"} on this list yet: ${missing.slice(0, 4).map((n) => esc(n.crop.name + (n.variety ? ` ‘${n.variety}’` : ''))).join(', ')}${missing.length > 4 ? '…' : ''}</span><button class="btn" id="seedFromLayout2">Add them</button></div>` : ''}
+    ${rows.length ? `<div class="seed-stats">
+      <div><b>${rows.length}</b><span>varieties</span></div>
+      <div><b>${tot.sow}</b><span>seeds to sow</span></div>
+      <div><b>${tot.sown}</b><span>sown so far</span></div>
+      <div><b>${tot.sown ? Math.round(tot.germ / tot.sown * 100) + '%' : '—'}</b><span>germination</span></div>
+      <div><b>${tot.out}</b><span>planted out</span></div>
+      ${tot.buy ? `<div><b>${tot.buy}</b><span>plants to buy</span></div>` : ''}</div>
+    <div class="table-scroll"><table class="table seeds-table"><thead><tr><th>Plant</th><th>Variety</th><th>How</th><th class="r" title="Plants of this variety in the layout">Needed</th><th class="r">Sow / buy</th><th>When</th><th>Sown on</th><th class="r">Sprouted</th><th class="r">Planted out</th><th>Status</th><th>Seed source / notes</th><th></th></tr></thead><tbody>
+    ${rows.map((x) => { const { r, c } = x; const vo = varOpts(r.cropId); return `<tr data-seed="${esc(r.id)}" class="${r.transplanted ? 'done' : ''}">
+      <td><span class="row" style="gap:8px;justify-content:flex-start;white-space:nowrap"><span class="lib-icon" style="flex:0 0 26px;width:26px;height:26px;font-size:14px;background:${esc(c.color)}22">${esc(c.icon)}</span>${esc(c.name)}</span></td>
+      <td><input class="var" type="text" data-k="variety" value="${esc(r.variety)}" placeholder="Variety" maxlength="60" ${vo.length ? `list="vl_${esc(r.id)}"` : ''} ${dis}>${vo.length ? `<datalist id="vl_${esc(r.id)}">${vo.map((v) => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}</td>
+      <td><select data-k="method" ${dis}>${Object.entries(METHOD_LABEL).map(([k, v]) => `<option value="${k}" ${r.method === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+      <td class="r num">${x.need ?? '—'}</td>
+      <td class="r"><input type="number" min="0" data-k="sow" value="${r.sow ?? ''}" ${dis}></td>
+      <td>${winHtml(x)}</td>
+      <td>${r.method === 'buy' ? '' : `<input type="date" data-k="sownDate" value="${esc(r.sownDate || '')}" ${dis}>`}</td>
+      <td class="r">${r.method === 'buy' ? '' : `<input type="number" min="0" data-k="germinated" value="${r.germinated ?? ''}" ${dis}>`}</td>
+      <td class="r"><input type="number" min="0" data-k="transplanted" value="${r.transplanted ?? ''}" ${dis}></td>
+      <td>${status(r)}</td>
+      <td><input class="note" type="text" data-k="notes" value="${esc(r.notes)}" placeholder="Source or notes" maxlength="300" ${dis}></td>
+      <td>${dis ? '' : `<button class="btn ghost icon" data-del aria-label="Remove ${esc(c.name)}">✕</button>`}</td></tr>`; }).join('')}
+    </tbody></table></div>
+    <p class="lib-meta" style="margin:12px 0 0">“Needed” counts plants of that plant and variety in the layout. New rows suggest sowing about 30% extra to allow for seeds that don't sprout. Set a planting's variety in the layout's side panel to match it here.</p>`
+    : `<div class="empty"><h2>Track your seed starting</h2><p>${needs.size ? 'Pull in every plant and variety from your layout with the number of seeds to sow, or add varieties one at a time.' : 'Add the varieties you plan to start. Plants you place in the layout can be pulled in here too.'}</p>${dis ? '' : `<p>${needs.size ? '<button class="btn primary" id="seedFromLayout3">Add from layout</button> ' : ''}<button class="btn" id="seedAdd2">Add a variety</button></p>`}</div>`}</div>`;
+  ['#seedFromLayout', '#seedFromLayout2', '#seedFromLayout3'].forEach((id) => $(id, pane)?.addEventListener('click', addSeedsFromLayout));
+  ['#seedAdd', '#seedAdd2'].forEach((id) => $(id, pane)?.addEventListener('click', () => seedDialog()));
+  $('#seedPrint', pane).addEventListener('click', () => window.print());
+  pane.querySelector('[data-act="frost"]')?.addEventListener('click', () => planDialog(S.plan));
+  $('#seedCsv', pane).addEventListener('click', () => {
+    const lines = [['Plant', 'Variety', 'How', 'Needed', 'Sow/buy', 'Window start', 'Window end', 'Sown on', 'Sprouted', 'Planted out', 'Notes'],
+      ...rows.map(({ r, c, win, need }) => [c.name, r.variety, METHOD_LABEL[r.method], need ?? '', r.sow ?? '', win ? fmtDate(win[0]) : '', win ? fmtDate(win[1]) : '', r.sownDate || '', r.germinated ?? '', r.transplanted ?? '', r.notes])];
+    download(`${S.plan.name} seed starting.csv`, new Blob([lines.map((l) => l.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')], { type: 'text/csv' }));
+  });
+  pane.querySelectorAll('tr[data-seed]').forEach((tr) => {
+    const id = tr.dataset.seed;
+    tr.querySelectorAll('[data-k]').forEach((inp) => inp.addEventListener('change', () => {
+      const r = { ...S.seeds.get(id) }; const k = inp.dataset.k;
+      r[k] = inp.type === 'number' ? (inp.value === '' ? null : Number(inp.value)) : inp.value || (k === 'sownDate' ? null : '');
+      if (k === 'sownDate' && inp.value && r.sow == null) r.sow = 0;
+      saveSeeds([r]);
+      seedsDirty = true; // re-render once focus leaves the table
+    }));
+    tr.querySelector('[data-del]')?.addEventListener('click', () => { deleteSeeds([id]); renderSeeds(); });
+  });
+}
+function seedDialog() {
+  const cats = ['Vegetable', 'Herb', 'Fruit', 'Fruit Tree', 'Flower'];
+  const crops = [...S.crops.values()].filter((c) => c.builtin || c.ownerId === S.user.id).sort((a, b) => a.name.localeCompare(b.name));
+  const d = modal({
+    title: 'Add a variety',
+    body: `<form id="seedForm"><label class="field"><span>Plant</span><select name="crop" required><option value="">Choose a plant</option>
+      ${crops.some((c) => !c.builtin) ? `<optgroup label="My plants">${crops.filter((c) => !c.builtin).map((c) => `<option value="${esc(c.id)}">${esc(c.icon)} ${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+      ${cats.map((g) => `<optgroup label="${CAT_LABEL[g] || g + 's'}">${crops.filter((c) => c.builtin && c.category === g).map((c) => `<option value="${esc(c.id)}">${esc(c.icon)} ${esc(c.name)}</option>`).join('')}</optgroup>`).join('')}</select></label>
+      <label class="field"><span>Variety</span><input type="text" name="variety" maxlength="60" placeholder="e.g. Sungold"></label>
+      <div class="grid2"><label class="field"><span>How</span><select name="method">${Object.entries(METHOD_LABEL).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Seeds to sow (or plants to buy)</span><input type="number" name="sow" min="0" placeholder="e.g. 12"></label></div>
+      <label class="field"><span>Seed source / notes</span><input type="text" name="notes" maxlength="300" placeholder="e.g. Johnny's, packet from 2025"></label><p class="error" id="seedErr"></p></form>`,
+    foot: '<button class="btn" data-close>Cancel</button><button class="btn primary" id="seedSave">Add variety</button>',
+  });
+  const f = $('#seedForm', d);
+  f.crop.addEventListener('change', () => { const c = S.crops.get(f.crop.value); if (c) f.method.value = defaultMethod(c); });
+  $('#seedSave', d).addEventListener('click', () => {
+    if (!f.crop.value) { $('#seedErr', d).textContent = 'Choose a plant.'; return; }
+    saveSeeds([{ id: uid(), cropId: f.crop.value, variety: f.variety.value.trim(), method: f.method.value, sow: f.sow.value === '' ? null : Number(f.sow.value), sownDate: null, germinated: null, transplanted: null, source: '', notes: f.notes.value.trim() }]);
+    d.close(); renderSeeds();
+  });
 }
 
 // ---------------------------------------------------------------- dialogs

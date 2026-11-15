@@ -79,6 +79,25 @@ const MIGRATIONS = [
   ALTER TABLE plans ADD COLUMN place TEXT;
   CREATE TABLE frost_cache (zip TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at INTEGER NOT NULL);
   `,
+  // v3: seed-starting tracker
+  `
+  CREATE TABLE seeds (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    crop_id TEXT NOT NULL,
+    variety TEXT NOT NULL DEFAULT '',
+    method TEXT NOT NULL DEFAULT 'indoor',
+    sow_count INTEGER,
+    sown_date TEXT,
+    germinated INTEGER,
+    transplanted INTEGER,
+    source TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
+    updated_by INTEGER,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX seeds_plan ON seeds(plan_id);
+  `,
 ];
 
 function openDb(file) {

@@ -233,3 +233,30 @@ dialog.modal::backdrop { background: rgba(28,38,25,.45); }
   .view-pane { position: static; padding: 0; background: #fff; }
   .sheet { border: 0; }
 }
+
+/* ---------- seed tracker ---------- */
+.sheet.wide { max-width: 1320px; }
+.seed-stats { display: flex; flex-wrap: wrap; gap: 28px; margin: 0 0 18px; }
+.seed-stats div { display: grid; }
+.seed-stats b { font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.seed-stats span { color: var(--ink-2); font-size: 12px; }
+.table-scroll { overflow-x: auto; margin: 0 -8px; padding: 0 8px; }
+.seeds-table { min-width: 1080px; }
+.seeds-table td { padding: 5px 6px; }
+.seeds-table input, .seeds-table select { height: 30px; padding: 0 7px; font-size: 13px; }
+.seeds-table input[type=number] { width: 72px; text-align: right; }
+.seeds-table input[type=date] { width: 138px; }
+.seeds-table .var { min-width: 130px; }
+.seeds-table .note { min-width: 150px; }
+.seeds-table select { width: 128px; }
+.seeds-table tr.done td { background: #f6faf2; }
+.window { font-size: 12px; white-space: nowrap; }
+.window.now { color: var(--leaf-2); font-weight: 600; }
+.window.late { color: var(--danger); font-weight: 600; }
+.status { font-size: 11px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; background: var(--sage-2); color: var(--ink-2); }
+.status.sown { background: #fff4df; color: #8a5a10; }
+.status.up { background: var(--leaf-soft); color: var(--leaf-2); }
+.status.out { background: var(--leaf); color: #fff; }
+.callout { background: #fff4df; border-radius: var(--r-md); padding: 10px 14px; margin: 0 0 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.app.wide-view { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
+.app.wide-view .sidebar, .app.wide-view .inspector, .app.wide-view #toggleSide, .app.wide-view #toggleInsp { display: none !important; }

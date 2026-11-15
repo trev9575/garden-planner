@@ -167,6 +167,10 @@ function cropJson(c) {
 function itemJson(i) {
   return { id: i.id, type: i.type, cropId: i.crop_id, x: i.x, y: i.y, w: i.w, h: i.h, z: i.z, props: JSON.parse(i.props || '{}'), updatedBy: i.updated_by, updatedAt: i.updated_at };
 }
+function seedJson(r) {
+  return { id: r.id, cropId: r.crop_id, variety: r.variety, method: r.method, sow: r.sow_count, sownDate: r.sown_date,
+    germinated: r.germinated, transplanted: r.transplanted, source: r.source, notes: r.notes, updatedAt: r.updated_at };
+}
 function planJson(p) {
   return {
     id: p.id, ownerId: p.owner_id, ownerName: p.owner_name, name: p.name, width: p.width, height: p.height,
@@ -490,7 +494,10 @@ route('GET', '/api/plans/:id', (ctx) => {
   const items = db.prepare('SELECT * FROM items WHERE plan_id = ? ORDER BY z, updated_at').all(ctx.params.id).map(itemJson);
   // include custom crops (possibly owned by other members) used in this plan
   const crops = db.prepare(`SELECT c.* FROM crops c WHERE c.builtin = 0 AND c.id IN (SELECT DISTINCT crop_id FROM items WHERE plan_id = ? AND crop_id IS NOT NULL)`).all(ctx.params.id).map(cropJson);
-  return { plan: loadPlan(ctx.params.id, role), items, crops, members: planMembers(ctx.params.id) };
+  const seeds = db.prepare('SELECT * FROM seeds WHERE plan_id = ? ORDER BY rowid').all(ctx.params.id).map(seedJson);
+  const seedCrops = db.prepare(`SELECT c.* FROM crops c WHERE c.builtin = 0 AND c.id IN (SELECT crop_id FROM seeds WHERE plan_id = ?)`).all(ctx.params.id).map(cropJson);
+  for (const c of seedCrops) if (!crops.some((x) => x.id === c.id)) crops.push(c);
+  return { plan: loadPlan(ctx.params.id, role), items, crops, seeds, members: planMembers(ctx.params.id) };
 });
 
 route('PUT', '/api/plans/:id', async (ctx) => {
@@ -588,6 +595,54 @@ route('POST', '/api/plans/:id/items/delete', async (ctx) => {
   try { for (const id of ids) del.run(id, ctx.params.id); db.prepare('UPDATE plans SET updated_at = ? WHERE id = ?').run(now(), ctx.params.id); db.exec('COMMIT'); }
   catch (e) { db.exec('ROLLBACK'); throw e; }
   broadcast(ctx.params.id, 'delete', { ids, by: ctx.user.id, clientId: str(body.clientId, 64) });
+  return { ok: true };
+});
+
+// --- seed starting tracker
+const SEED_METHODS = new Set(['indoor', 'direct', 'buy']);
+const optInt = (v) => (v === null || v === undefined || v === '' ? null : Math.round(num(v, 0, 1e6, 0)));
+route('POST', '/api/plans/:id/seeds', async (ctx) => {
+  requirePlan(ctx.params.id, ctx.user, 'editor');
+  const body = await readJson(ctx.req);
+  const list = (Array.isArray(body.seeds) ? body.seeds : []).slice(0, 1000);
+  const planId = ctx.params.id; const t = now();
+  const getEx = db.prepare('SELECT plan_id FROM seeds WHERE id = ?');
+  const cropOk = db.prepare('SELECT 1 FROM crops WHERE id = ?');
+  const up = db.prepare(`INSERT INTO seeds (id, plan_id, crop_id, variety, method, sow_count, sown_date, germinated, transplanted, source, notes, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET crop_id=excluded.crop_id, variety=excluded.variety, method=excluded.method, sow_count=excluded.sow_count,
+      sown_date=excluded.sown_date, germinated=excluded.germinated, transplanted=excluded.transplanted, source=excluded.source,
+      notes=excluded.notes, updated_by=excluded.updated_by, updated_at=excluded.updated_at`);
+  const out = [];
+  db.exec('BEGIN');
+  try {
+    for (const r of list) {
+      const id = str(r.id, 64);
+      if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) throw bad('Invalid seed id');
+      const ex = getEx.get(id);
+      if (ex && ex.plan_id !== planId) throw bad('Seed id conflict');
+      const cropId = str(r.cropId, 64);
+      if (!cropOk.get(cropId)) throw bad('Unknown plant');
+      const row = {
+        id, crop_id: cropId, variety: str(r.variety, 60), method: SEED_METHODS.has(r.method) ? r.method : 'indoor',
+        sow_count: optInt(r.sow), sown_date: isDate(r.sownDate) ? r.sownDate : null, germinated: optInt(r.germinated),
+        transplanted: optInt(r.transplanted), source: str(r.source, 80), notes: str(r.notes, 300), updated_at: t,
+      };
+      up.run(row.id, planId, row.crop_id, row.variety, row.method, row.sow_count, row.sown_date, row.germinated, row.transplanted, row.source, row.notes, ctx.user.id, t);
+      out.push(seedJson(row));
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  broadcast(planId, 'seeds', { seeds: out, clientId: str(body.clientId, 64) });
+  return { seeds: out };
+});
+route('POST', '/api/plans/:id/seeds/delete', async (ctx) => {
+  requirePlan(ctx.params.id, ctx.user, 'editor');
+  const body = await readJson(ctx.req);
+  const ids = (Array.isArray(body.ids) ? body.ids : []).filter((x) => typeof x === 'string').slice(0, 1000);
+  const del = db.prepare('DELETE FROM seeds WHERE id = ? AND plan_id = ?');
+  for (const id of ids) del.run(id, ctx.params.id);
+  broadcast(ctx.params.id, 'seeds-delete', { ids, clientId: str(body.clientId, 64) });
   return { ok: true };
 });
 

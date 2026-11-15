@@ -12,6 +12,7 @@ A self-hosted garden layout planner for your Unraid server. Draw your plot and b
 - **Companion planting hints** – a red badge flags plants next to a bad neighbour; the side panel lists good and bad neighbours. Overlapping plantings are outlined in red.
 - **Frost dates from your ZIP code**: the server works out your average last spring and first fall frost from 30 years of local daily lows (Open-Meteo, 32°F, the same 50% definition NOAA uses) and shows your USDA hardiness zone. Results are cached.
 - **Planting calendar** from your last and first frost dates: start-indoors, transplant, direct-sow and harvest windows plus a dated to-do list.
+- **Seed starting tracker** (Seeds tab): pulls every plant and variety from the layout with how many to sow (plus ~30% for germination losses), shows each variety's sowing window from your frost dates and flags late ones, and lets you log sown date, how many sprouted and how many were planted out. Shows germination rate overall; download as CSV.
 - **Plant list** with totals per variety; download as CSV.
 - **Copy for next year** – duplicate a plan with just the beds, ready for crop rotation.
 - **Export** the layout as PNG or SVG, or print it.
