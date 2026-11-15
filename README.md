@@ -5,11 +5,12 @@ A self-hosted garden layout planner for your Unraid server. Draw your plot and b
 ## Features
 
 - **To-scale layout** – set the plot size in feet; grid, rulers, snapping (1″ to 1 ft), zoom and pan, touch pinch-zoom.
-- **70+ built-in plants** with in-row and between-row spacing, plant family, days to maturity and sowing times. Add your own custom plants.
+- **170 built-in plants**: 47 vegetables, 11 herbs, 77 flowers (annuals, perennials and spring bulbs), 30 fruit trees and more, each with in-row and between-row spacing, plant family, days to maturity and sowing times. Add your own custom plants.
 - **Spacing you can see** – drag a plant over an area and it fills with plants at the right spacing, each drawn as its real footprint. Plant counts update as you resize.
 - **Traditional rows or square-foot** spacing per plan.
 - **Beds and objects** – raised beds, in-ground beds, pots, paths, fences, trellises, trees, sheds, water and text labels.
 - **Companion planting hints** – a red badge flags plants next to a bad neighbour; the side panel lists good and bad neighbours. Overlapping plantings are outlined in red.
+- **Frost dates from your ZIP code**: the server works out your average last spring and first fall frost from 30 years of local daily lows (Open-Meteo, 32°F, the same 50% definition NOAA uses) and shows your USDA hardiness zone. Results are cached.
 - **Planting calendar** from your last and first frost dates: start-indoors, transplant, direct-sow and harvest windows plus a dated to-do list.
 - **Plant list** with totals per variety; download as CSV.
 - **Copy for next year** – duplicate a plan with just the beds, ready for crop rotation.
@@ -77,6 +78,9 @@ Push changes to GitHub → wait for the Action to finish (a couple of minutes) �
 
 ### Reverse proxy note
 Live updates use Server-Sent Events. Nginx Proxy Manager works out of the box (the app sends `X-Accel-Buffering: no`). If you use a custom nginx config, make sure `proxy_buffering off;` is set for this host.
+
+### Internet access
+The ZIP lookup is the only feature that calls out to the internet (api.zippopotam.us, phzmapi.org and archive-api.open-meteo.com, all free with no key). Everything else works offline, and you can always type frost dates in by hand.
 
 ### Backups
 Everything is in one SQLite file, `garden.db` (plus `-wal`/`-shm` while running). The Appdata Backup plugin covers it, or stop the container and copy the folder.

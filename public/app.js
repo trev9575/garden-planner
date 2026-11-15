@@ -64,6 +64,7 @@ const OBJECTS = [
 ];
 const OBJ = Object.fromEntries(OBJECTS.map((o) => [o.type, o]));
 const LAYER = { path: 0, bed: 1, 'raised-bed': 1, structure: 1, water: 1, container: 2, tree: 4, fence: 3, trellis: 3, crop: 5, label: 6 };
+const CAT_LABEL = { All: 'All', Mine: 'My plants', 'Fruit Tree': 'Fruit trees' };
 const USER_COLORS = ['#e5484d', '#f76b15', '#ffc53d', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#ad7f58'];
 
 // ---------------------------------------------------------------- api
@@ -489,7 +490,7 @@ function cropSvg(it, k, flags) {
   let s = `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${Math.min(2, w / 6, h / 6)}" fill="${col}" fill-opacity=".10" stroke="${conflict ? '#c43d3d' : col}" stroke-opacity="${conflict ? 1 : 0.75}" stroke-width="${(conflict ? 2 : 1.2) / k}" stroke-dasharray="${conflict ? '' : `${4 / k} ${3 / k}`}"/>`;
   const ox = x + (w - g.cols * g.sx) / 2, oy = y + (h - g.rows * g.sy) / 2;
   const r = Math.max(0.5, (g.s / 2) * 0.94);
-  const fsz = Math.max(0.6, Math.min(g.sx, g.sy, g.s) * 0.58);
+  const fsz = Math.max(0.6, Math.min(g.sx, g.sy, g.s) * 0.58, 1) > 30 ? 30 : Math.max(0.6, Math.min(g.sx, g.sy, g.s) * 0.58);
   const showIcon = fsz * k >= 5;
   const plant = (cx, cy) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${col}" fill-opacity=".22" stroke="${col}" stroke-opacity=".55" stroke-width="${0.8 / k}"/>${showIcon ? `<text x="${cx}" y="${cy}" font-size="${fsz}" text-anchor="middle" dominant-baseline="central">${esc(c.icon)}</text>` : ''}`;
   if (g.count <= 80) {
@@ -867,22 +868,22 @@ function renderLibrary() {
       <span><span class="lib-name">${esc(o.name)}</span><br><span class="lib-meta">${fmtLen(o.w)} × ${fmtLen(o.h)}</span></span><span></span></button>`).join('');
     return;
   }
-  const cats = ['All', 'Vegetable', 'Herb', 'Fruit', 'Flower', 'Mine'];
-  $('#cropChips').innerHTML = cats.map((c) => `<button class="chip" data-cat="${c}" aria-pressed="${S.libFilter === c}">${c === 'Mine' ? 'My plants' : c === 'All' ? 'All' : c + 's'}</button>`).join('');
+  const cats = ['All', 'Vegetable', 'Herb', 'Fruit', 'Fruit Tree', 'Flower', 'Mine'];
+  $('#cropChips').innerHTML = cats.map((c) => `<button class="chip" data-cat="${c}" aria-pressed="${S.libFilter === c}">${CAT_LABEL[c] || c + 's'}</button>`).join('');
   const q = S.libSearch.toLowerCase();
   const list = [...S.crops.values()].filter((c) => (c.builtin || c.ownerId === S.user?.id)
     && (!q || c.name.toLowerCase().includes(q) || (c.family || '').toLowerCase().includes(q))
     && (S.libFilter === 'All' || (S.libFilter === 'Mine' ? !c.builtin : c.category === S.libFilter)));
   list.sort((a, b) => (a.builtin - b.builtin) || a.name.localeCompare(b.name));
   const mode = S.plan?.mode;
-  const row = (c) => `<button class="lib-item" data-crop="${esc(c.id)}" aria-pressed="${S.placing?.kind === 'crop' && S.placing.id === c.id}" title="${esc(c.name)}: ${c.spacing}″ apart${mode === 'sfg' ? '' : `, rows ${c.rowSpacing}″ apart`}">
+  const row = (c) => `<button class="lib-item" data-crop="${esc(c.id)}" aria-pressed="${S.placing?.kind === 'crop' && S.placing.id === c.id}" title="${esc(c.name)}: ${fmtLen(c.spacing)} apart${mode === 'sfg' ? '' : `, rows ${fmtLen(c.rowSpacing)} apart`}">
     <span class="lib-icon" style="background:${esc(c.color)}22">${esc(c.icon)}</span>
-    <span style="min-width:0"><span class="lib-name">${esc(c.name)}</span><br><span class="lib-meta">${c.spacing}″ apart${mode === 'sfg' ? ` · ${Math.max(1, Math.floor(12 / c.spacing)) ** 2}/sq ft` : ` · rows ${c.rowSpacing}″`}</span></span>
+    <span style="min-width:0"><span class="lib-name">${esc(c.name)}</span><br><span class="lib-meta">${fmtLen(c.spacing)} apart${mode === 'sfg' ? (c.spacing <= 12 ? ` · ${Math.floor(12 / c.spacing) ** 2}/sq ft` : '') : c.rowSpacing !== c.spacing ? ` · rows ${fmtLen(c.rowSpacing)}` : ''}</span></span>
     ${!c.builtin ? `<span class="btn ghost icon lib-edit" data-edit="${esc(c.id)}" role="button" aria-label="Edit ${esc(c.name)}">✎</span>` : '<span></span>'}</button>`;
   let html = ro;
   if (!list.length) html += `<div class="lib-group">No plants match “${esc(S.libSearch)}”.</div>`;
   else if (S.libFilter === 'All' && !q) {
-    const groups = [['My plants', list.filter((c) => !c.builtin)], ...['Vegetable', 'Herb', 'Fruit', 'Flower'].map((g) => [g + 's', list.filter((c) => c.builtin && c.category === g)])];
+    const groups = [['My plants', list.filter((c) => !c.builtin)], ...['Vegetable', 'Herb', 'Fruit', 'Fruit Tree', 'Flower'].map((g) => [CAT_LABEL[g] || g + 's', list.filter((c) => c.builtin && c.category === g)])];
     for (const [g, l] of groups) if (l.length) html += `<div class="lib-group">${g}</div>` + l.map(row).join('');
   } else html += list.map(row).join('');
   lib.innerHTML = html;
@@ -935,7 +936,7 @@ function renderInspector() {
     const c = cropOf(it); const g = plantGrid(it); const n = neighbours(it); const tl = cropTimeline(c);
     html += `<div class="insp-sec"><div class="insp-head"><span class="lib-icon" style="background:${esc(c.color)}22">${esc(c.icon)}</span><div><h2>${esc(c.name)}</h2><p>${esc(c.family || c.category)}${c.dtm ? ` · ${c.dtm} days to harvest` : ''}${c.perennial ? ' · perennial' : ''}</p></div></div></div>
     <div class="insp-sec"><div class="big-count num">${g.count}<small>plant${g.count === 1 ? '' : 's'}</small></div>
-      <p class="lib-meta" style="margin:6px 0 0">${g.cols} × ${g.rows} at ${g.s}″ apart${S.plan.mode === 'sfg' ? '' : `, rows ${g.rs}″ apart`} · ${r2(it.w * it.h / 144)} sq ft</p>
+      <p class="lib-meta" style="margin:6px 0 0">${g.cols} × ${g.rows} at ${fmtLen(g.s)} apart${S.plan.mode === 'sfg' ? '' : `, rows ${fmtLen(g.rs)} apart`} · ${r2(it.w * it.h / 144)} sq ft</p>
       ${n.overlap ? '<p class="error" style="margin:8px 0 0">This planting overlaps another one.</p>' : ''}</div>
     <div class="insp-sec"><h3>Planting</h3>
       <label class="field"><span>Variety</span><input type="text" data-prop="variety" value="${esc(p.variety || '')}" placeholder="e.g. Cherokee Purple" ${dis}></label>
@@ -1007,6 +1008,7 @@ function planSummary() {
     <div style="margin-top:10px"><div class="stat-line"><span>Plantings</span><span class="num">${crops.length}</span></div>
     <div class="stat-line"><span>Beds and containers</span><span class="num">${beds.length}</span></div>
     <div class="stat-line"><span>Growing area</span><span class="num">${r2(bedArea)} sq ft</span></div>
+    ${p.place || p.zone ? `<div class="stat-line"><span>Location</span><span>${esc([p.place, p.zone && `zone ${p.zone}`].filter(Boolean).join(' · '))}</span></div>` : ''}
     <div class="stat-line"><span>Last spring frost</span><span>${lf ? fmtDate(lf) : '<button class="linkish" data-act="settings">Set date</button>'}</span></div>
     <div class="stat-line"><span>First fall frost</span><span>${ff ? fmtDate(ff) : '—'}</span></div>
     <div class="stat-line"><span>Spacing</span><span>${p.mode === 'sfg' ? 'Square foot' : 'Rows'}</span></div></div></div>
@@ -1083,7 +1085,7 @@ function renderList() {
   $('#listView').innerHTML = `<div class="sheet"><div class="sheet-head"><div><h2>Plant list</h2><p>${esc(S.plan.name)} · everything you need to buy or start</p></div>
     <div class="btn-row"><button class="btn" id="csvBtn">Download CSV</button><button class="btn" id="printList">Print</button></div></div>
     ${rows.length ? `<table class="table"><thead><tr><th>Plant</th><th>Variety</th><th class="r">Plantings</th><th class="r">Plants</th><th class="r">Area (sq ft)</th><th class="r">Spacing</th></tr></thead><tbody>
-    ${rows.map((r) => `<tr><td><span class="row" style="gap:8px"><span class="lib-icon" style="flex:0 0 30px;background:${esc(r.crop.color)}22">${esc(r.crop.icon)}</span>${esc(r.crop.name)}</span></td><td>${esc(r.variety || '—')}</td><td class="r num">${r.plantings}</td><td class="r num">${r.plants}</td><td class="r num">${r2(r.area)}</td><td class="r num">${r.crop.spacing}″${S.plan.mode === 'sfg' ? '' : ` × ${r.crop.rowSpacing}″`}</td></tr>`).join('')}
+    ${rows.map((r) => `<tr><td><span class="row" style="gap:8px"><span class="lib-icon" style="flex:0 0 30px;background:${esc(r.crop.color)}22">${esc(r.crop.icon)}</span>${esc(r.crop.name)}</span></td><td>${esc(r.variety || '—')}</td><td class="r num">${r.plantings}</td><td class="r num">${r.plants}</td><td class="r num">${r2(r.area)}</td><td class="r num">${fmtLen(r.crop.spacing)}${S.plan.mode === 'sfg' ? '' : ` × ${fmtLen(r.crop.rowSpacing)}`}</td></tr>`).join('')}
     </tbody><tfoot><tr><td colspan="2">Total</td><td class="r num">${tot.plantings}</td><td class="r num">${tot.plants}</td><td class="r num">${r2(tot.area)}</td><td></td></tr></tfoot></table>`
     : '<div class="empty"><h2>No plants yet</h2><p>Switch to Layout and place some plants. They will be counted here.</p></div>'}</div>`;
   $('#csvBtn').addEventListener('click', () => {
@@ -1099,7 +1101,7 @@ function renderCalendar() {
   const pane = $('#calendarView');
   const crops = [...new Map([...S.items.values()].filter((i) => i.type === 'crop').map((i) => [i.cropId, cropOf(i)])).values()];
   if (!lf) {
-    pane.innerHTML = `<div class="sheet"><div class="empty"><h2>Add your frost dates</h2><p>Planting times are counted from your average last spring frost. Your local extension office or almanac.com/gardening/frostdates can tell you yours.</p><p><button class="btn primary" id="calSet">Set frost dates</button></p></div></div>`;
+    pane.innerHTML = `<div class="sheet"><div class="empty"><h2>Add your frost dates</h2><p>Planting times are counted from your average last spring frost. Enter your ZIP code in plan settings and the dates are filled in for you.</p><p><button class="btn primary" id="calSet">Set frost dates</button></p></div></div>`;
     $('#calSet').addEventListener('click', () => planDialog(p)); return;
   }
   const year = lf.getFullYear();
@@ -1145,9 +1147,11 @@ function planDialog(plan) {
       <label class="field"><span>Name</span><input type="text" name="name" value="${esc(p.name)}" placeholder="Backyard ${new Date().getFullYear()}" maxlength="80" ${dis}></label>
       <div class="grid2"><label class="field"><span>Width (ft)</span><input type="number" name="width" min="1" max="1000" step="0.5" value="${r2(p.width / 12)}" required ${dis}></label>
       <label class="field"><span>Length (ft)</span><input type="number" name="height" min="1" max="1000" step="0.5" value="${r2(p.height / 12)}" required ${dis}></label></div>
+      <div class="field"><span>ZIP code</span><div class="row"><input type="text" name="zip" inputmode="numeric" pattern="\\d{5}" maxlength="5" value="${esc(p.zip || (isNew ? localStorage.getItem('gp_zip') || '' : ''))}" placeholder="e.g. 43210" ${dis}><button type="button" class="btn" id="zipLookup" ${dis}>Look up frost dates</button></div>
+        <small id="zipInfo">${p.place ? `${esc(p.place)}${p.zone ? ` · zone ${esc(p.zone)}` : ''}` : 'Fills in your average frost dates from 30 years of local weather.'}</small></div>
       <div class="grid2"><label class="field"><span>Last spring frost</span><input type="date" name="lastFrost" value="${esc(p.lastFrost || '')}" ${dis}></label>
       <label class="field"><span>First fall frost</span><input type="date" name="firstFrost" value="${esc(p.firstFrost || '')}" ${dis}></label></div>
-      <p class="lib-meta" style="margin:-4px 0 12px">Frost dates set the planting calendar. Find yours from your local extension office or almanac.com/gardening/frostdates.</p>
+      <p class="lib-meta" style="margin:-4px 0 12px">Frost dates set the planting calendar. You can type your own if you know them better.</p>
       <div class="grid2"><label class="field"><span>Spacing style</span><select name="mode" ${dis}><option value="rows" ${p.mode === 'rows' ? 'selected' : ''}>Traditional rows</option><option value="sfg" ${p.mode === 'sfg' ? 'selected' : ''}>Square foot / intensive</option></select></label>
       <label class="field"><span>Snap to</span><select name="snap" ${dis}>${[1, 2, 3, 4, 6, 12].map((n) => `<option value="${n}" ${p.snap === n ? 'selected' : ''}>${n === 12 ? '1 ft' : n + ' in'}</option>`).join('')}</select></label></div>
       <label class="field"><span>Season year</span><input type="number" name="year" min="1900" max="3000" value="${p.year || new Date().getFullYear()}" ${dis}></label>
@@ -1158,11 +1162,38 @@ function planDialog(plan) {
   });
   const f = $('#planForm', d);
   f.lastFrost.addEventListener('change', () => { if (f.lastFrost.value) f.year.value = f.lastFrost.value.slice(0, 4); });
+  f.year.addEventListener('change', () => { // keep frost dates in the season year
+    const y = String(f.year.value).padStart(4, '0');
+    for (const el of [f.lastFrost, f.firstFrost]) if (el.value) el.value = y + el.value.slice(4);
+  });
+  let loc = { zone: p.zone || null, place: p.place || null };
+  const lookup = async () => {
+    const zip = f.zip.value.trim(); const info = $('#zipInfo', d);
+    if (!/^\d{5}$/.test(zip)) { info.textContent = 'Enter a 5-digit US ZIP code.'; return; }
+    const btn = $('#zipLookup', d); btn.disabled = true; btn.textContent = 'Looking up…';
+    info.textContent = 'Checking 30 years of weather for this location. The first lookup can take a few seconds.';
+    try {
+      const r = await api('GET', `/api/frost/${zip}`);
+      const y = String(f.year.value || new Date().getFullYear());
+      if (r.lastFrost) f.lastFrost.value = `${y}-${r.lastFrost}`;
+      if (r.firstFrost) f.firstFrost.value = `${y}-${r.firstFrost}`;
+      loc = { zone: r.zone, place: r.place };
+      localStorage.setItem('gp_zip', zip);
+      const md = (v) => { const [m, dd] = v.split('-').map(Number); return `${MONTHS[m - 1]} ${dd}`; };
+      info.textContent = [r.place, r.zone && `zone ${r.zone}`,
+        r.lastFrost ? `last frost ${md(r.lastFrost)}, first frost ${md(r.firstFrost)}` : 'frost is rare here, so dates were left as they are',
+        r.frostFreeDays && `${r.frostFreeDays} frost-free days`].filter(Boolean).join(' · ');
+    } catch (e) { info.textContent = e.message; }
+    finally { btn.disabled = false; btn.textContent = 'Look up frost dates'; }
+  };
+  $('#zipLookup', d)?.addEventListener('click', lookup);
+  f.zip.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookup(); } });
   const save = async () => {
     const body = {
       name: f.name.value.trim() || 'My garden', width: Math.round(Number(f.width.value) * 12), height: Math.round(Number(f.height.value) * 12),
       lastFrost: f.lastFrost.value || null, firstFrost: f.firstFrost.value || null, mode: f.mode.value, snap: Number(f.snap.value),
       notes: f.notes.value, year: Number(f.year.value) || undefined, clientId: S.clientId,
+      zip: f.zip.value.trim() || null, zone: f.zip.value.trim() ? loc.zone : null, place: f.zip.value.trim() ? loc.place : null,
     };
     if (!(body.width >= 12 && body.height >= 12)) { $('#planErr', d).textContent = 'Width and length must be at least 1 ft.'; return; }
     try {
@@ -1256,7 +1287,7 @@ function cropDialog(crop) {
       <label class="field"><span>Name</span><input type="text" name="name" value="${esc(c.name)}" maxlength="60" required placeholder="e.g. Ground cherry"></label>
       <div class="field"><span>Icon</span><div class="emoji-pick">${EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-pressed="${e === c.icon}">${e}</button>`).join('')}</div></div>
       <div class="grid2"><label class="field"><span>Colour</span><input type="color" name="color" value="${esc(c.color)}" style="height:34px;width:100%;padding:2px"></label>
-      <label class="field"><span>Type</span><select name="category">${['Vegetable', 'Herb', 'Fruit', 'Flower'].map((x) => `<option ${c.category === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div>
+      <label class="field"><span>Type</span><select name="category">${['Vegetable', 'Herb', 'Fruit', 'Fruit Tree', 'Flower'].map((x) => `<option value="${x}" ${c.category === x ? 'selected' : ''}>${CAT_LABEL[x] || x}</option>`).join('')}</select></label></div>
       <label class="field"><span>Plant family</span><input type="text" name="family" value="${esc(c.family)}" maxlength="40" placeholder="e.g. Nightshade"></label>
       </div><div>
       <div class="grid2"><label class="field"><span>Spacing between plants (in)</span><input type="number" name="spacing" min="0.5" max="240" step="0.5" value="${c.spacing}" required></label>

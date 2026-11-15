@@ -10,6 +10,7 @@ const crypto = require('node:crypto');
 const { promisify } = require('node:util');
 const { openDb } = require('./src/db');
 const { COMPANIONS } = require('./src/crops');
+const { lookupZip } = require('./src/frost');
 
 const scrypt = promisify(crypto.scrypt);
 const PORT = Number(process.env.PORT) || 3000;
@@ -170,6 +171,7 @@ function planJson(p) {
   return {
     id: p.id, ownerId: p.owner_id, ownerName: p.owner_name, name: p.name, width: p.width, height: p.height,
     lastFrost: p.last_frost, firstFrost: p.first_frost, mode: p.mode, snap: p.snap, notes: p.notes, year: p.year,
+    zip: p.zip, zone: p.zone, place: p.place,
     createdAt: p.created_at, updatedAt: p.updated_at, role: p.role,
   };
 }
@@ -467,6 +469,9 @@ function planFields(body, ex = {}) {
     mode: body.mode === 'sfg' || body.mode === 'rows' ? body.mode : ex.mode || 'rows',
     snap: [1, 2, 3, 4, 6, 12].includes(Number(body.snap)) ? Number(body.snap) : ex.snap ?? 6,
     notes: typeof body.notes === 'string' ? body.notes.slice(0, 5000) : ex.notes ?? '',
+    zip: body.zip === null || body.zip === '' ? null : /^\d{5}$/.test(String(body.zip)) ? String(body.zip) : ex.zip ?? null,
+    zone: body.zone === null ? null : typeof body.zone === 'string' ? body.zone.slice(0, 8) : ex.zone ?? null,
+    place: body.place === null ? null : typeof body.place === 'string' ? body.place.slice(0, 80) : ex.place ?? null,
     year: body.year == null ? ex.year ?? new Date().getFullYear() : Math.round(num(body.year, 1900, 3000, new Date().getFullYear())),
   };
 }
@@ -474,9 +479,9 @@ function planFields(body, ex = {}) {
 route('POST', '/api/plans', async (ctx) => {
   const f = planFields(await readJson(ctx.req));
   const id = uid(9); const t = now();
-  db.prepare(`INSERT INTO plans (id, owner_id, name, width, height, last_frost, first_frost, mode, snap, notes, year, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, ctx.user.id, f.name, f.width, f.height, f.last_frost, f.first_frost, f.mode, f.snap, f.notes, f.year, t, t);
+  db.prepare(`INSERT INTO plans (id, owner_id, name, width, height, last_frost, first_frost, mode, snap, notes, year, zip, zone, place, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ctx.user.id, f.name, f.width, f.height, f.last_frost, f.first_frost, f.mode, f.snap, f.notes, f.year, f.zip, f.zone, f.place, t, t);
   return { plan: loadPlan(id, 'owner') };
 });
 
@@ -493,8 +498,8 @@ route('PUT', '/api/plans/:id', async (ctx) => {
   const ex = db.prepare('SELECT * FROM plans WHERE id = ?').get(ctx.params.id);
   const body = await readJson(ctx.req);
   const f = planFields(body, ex);
-  db.prepare(`UPDATE plans SET name=?, width=?, height=?, last_frost=?, first_frost=?, mode=?, snap=?, notes=?, year=?, updated_at=? WHERE id=?`)
-    .run(f.name, f.width, f.height, f.last_frost, f.first_frost, f.mode, f.snap, f.notes, f.year, now(), ex.id);
+  db.prepare(`UPDATE plans SET name=?, width=?, height=?, last_frost=?, first_frost=?, mode=?, snap=?, notes=?, year=?, zip=?, zone=?, place=?, updated_at=? WHERE id=?`)
+    .run(f.name, f.width, f.height, f.last_frost, f.first_frost, f.mode, f.snap, f.notes, f.year, f.zip, f.zone, f.place, now(), ex.id);
   const plan = loadPlan(ex.id, role);
   broadcast(ex.id, 'plan', { plan: { ...plan, role: undefined }, by: ctx.user.id, clientId: str(body.clientId, 64) });
   return { plan };
@@ -515,10 +520,12 @@ route('POST', '/api/plans/:id/duplicate', async (ctx) => {
   const name = str(body.name, 80) || `${ex.name} (copy)`;
   db.exec('BEGIN');
   try {
-    db.prepare(`INSERT INTO plans (id, owner_id, name, width, height, last_frost, first_frost, mode, snap, notes, year, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, ctx.user.id, name, ex.width, ex.height, ex.last_frost, ex.first_frost, ex.mode, ex.snap, ex.notes,
-        body.year ? Math.round(num(body.year, 1900, 3000, ex.year)) : ex.year, t, t);
+    const newYear = body.year ? Math.round(num(body.year, 1900, 3000, ex.year)) : ex.year;
+    const shift = (d) => (d && newYear ? `${newYear}${d.slice(4)}` : d);
+    db.prepare(`INSERT INTO plans (id, owner_id, name, width, height, last_frost, first_frost, mode, snap, notes, year, zip, zone, place, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, ctx.user.id, name, ex.width, ex.height, shift(ex.last_frost), shift(ex.first_frost), ex.mode, ex.snap, ex.notes,
+        newYear, ex.zip, ex.zone, ex.place, t, t);
     const ins = db.prepare('INSERT INTO items (id, plan_id, type, crop_id, x, y, w, h, z, props, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const onlyBeds = !!body.structuresOnly;
     for (const i of db.prepare('SELECT * FROM items WHERE plan_id = ?').all(ex.id)) {
@@ -620,6 +627,21 @@ route('DELETE', '/api/plans/:id/members/:userId', (ctx) => {
   const members = planMembers(ctx.params.id);
   broadcast(ctx.params.id, 'members', { members });
   return { members };
+});
+
+const frostInflight = new Map();
+route('GET', '/api/frost/:zip', async (ctx) => {
+  const zip = ctx.params.zip;
+  if (!/^\d{5}$/.test(zip)) throw bad('Enter a 5-digit US ZIP code');
+  const cached = db.prepare('SELECT data, fetched_at FROM frost_cache WHERE zip = ?').get(zip);
+  if (cached && now() - cached.fetched_at < 180 * 864e5) return JSON.parse(cached.data);
+  if (!frostInflight.has(zip)) {
+    frostInflight.set(zip, lookupZip(zip).finally(() => frostInflight.delete(zip)));
+  }
+  let data;
+  try { data = await frostInflight.get(zip); } catch (e) { throw new HttpError(e.status || 502, e.message); }
+  db.prepare('INSERT INTO frost_cache (zip, data, fetched_at) VALUES (?, ?, ?) ON CONFLICT(zip) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at').run(zip, JSON.stringify(data), now());
+  return data;
 });
 
 route('GET', '/healthz', () => ({ ok: true, version: VERSION }), { auth: false });

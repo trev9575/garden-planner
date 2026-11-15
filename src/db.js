@@ -72,6 +72,13 @@ const MIGRATIONS = [
   );
   CREATE INDEX items_plan ON items(plan_id);
   `,
+  // v2: location on plans + frost-date lookup cache
+  `
+  ALTER TABLE plans ADD COLUMN zip TEXT;
+  ALTER TABLE plans ADD COLUMN zone TEXT;
+  ALTER TABLE plans ADD COLUMN place TEXT;
+  CREATE TABLE frost_cache (zip TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at INTEGER NOT NULL);
+  `,
 ];
 
 function openDb(file) {
