@@ -260,3 +260,4 @@ dialog.modal::backdrop { background: rgba(28,38,25,.45); }
 .callout { background: #fff4df; border-radius: var(--r-md); padding: 10px 14px; margin: 0 0 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .app.wide-view { grid-template-columns: 1fr; grid-template-areas: "top" "main"; }
 .app.wide-view .sidebar, .app.wide-view .inspector, .app.wide-view #toggleSide, .app.wide-view #toggleInsp { display: none !important; }
+.pool-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 16px; }

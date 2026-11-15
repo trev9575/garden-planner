@@ -98,6 +98,16 @@ const MIGRATIONS = [
   );
   CREATE INDEX seeds_plan ON seeds(plan_id);
   `,
+  // v4: pool seed starting across gardens
+  `
+  CREATE TABLE seed_pool (
+    host_plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+    added_by INTEGER,
+    PRIMARY KEY (host_plan_id, plan_id)
+  );
+  CREATE INDEX seed_pool_plan ON seed_pool(plan_id);
+  `,
 ];
 
 function openDb(file) {

@@ -39,6 +39,7 @@ const S = {
   plans: [], plan: null, role: null, members: [],
   items: new Map(),
   seeds: new Map(),
+  pool: { plans: [], hosts: [] },
   sel: new Set(),
   tool: 'select', placing: null, // {kind:'crop', id} | {kind:'object', type}
   view: { x: 40, y: 40, k: 2 },
@@ -193,6 +194,7 @@ async function openPlan(id) {
   $('#planBtn').textContent = `${S.plan.name} ▾`;
   $('#noPlan').classList.add('hidden');
   connectLive(id);
+  S.pool = { plans: [], hosts: [] }; loadPool();
   setView(S.viewMode);
   requestAnimationFrame(() => { fitView(); renderAll(); });
   renderLibrary();
@@ -255,6 +257,8 @@ function connectLive(planId) {
     for (const r of d.seeds) S.seeds.set(r.id, r);
     refreshSideViews();
   });
+  let poolTimer;
+  on('pool-changed', () => { clearTimeout(poolTimer); poolTimer = setTimeout(loadPool, 300); });
   on('seeds-delete', (d) => {
     if (d.clientId === S.clientId) return;
     for (const id of d.ids) S.seeds.delete(id);
@@ -379,10 +383,10 @@ function removeItems(ids) {
 
 // ---------------------------------------------------------------- crop maths
 const cropOf = (it) => S.crops.get(it.cropId) || { name: 'Unknown plant', icon: '🌱', color: '#888888', spacing: 12, rowSpacing: 12, timing: {}, family: '' };
-function plantGrid(it) {
+function plantGrid(it, mode = S.plan?.mode) {
   const c = cropOf(it); const p = it.props || {};
   const s = Number(p.spacing) || c.spacing;
-  const rs = S.plan?.mode === 'sfg' ? s : (Number(p.rowSpacing) || c.rowSpacing);
+  const rs = mode === 'sfg' ? s : (Number(p.rowSpacing) || c.rowSpacing);
   // rows run along the long side of the block
   const [sx, sy] = it.w >= it.h ? [s, rs] : [rs, s];
   const cols = Math.max(1, Math.floor(it.w / sx + 1e-6));
@@ -1162,10 +1166,42 @@ function renderCalendar() {
 const METHOD_LABEL = { indoor: 'Start indoors', direct: 'Direct sow', buy: 'Buy plants' };
 const defaultMethod = (c) => { const t = c.timing || {}; return t.indoor ? 'indoor' : t.direct ? 'direct' : 'buy'; };
 const defaultSow = (needed, method) => (method === 'buy' ? needed : Math.ceil(needed * 1.3));
+async function loadPool() {
+  if (!S.plan) return;
+  const planId = S.plan.id;
+  try {
+    const r = await api('GET', `/api/plans/${planId}/pool`);
+    if (!S.plan || S.plan.id !== planId) return;
+    for (const c of r.crops) S.crops.set(c.id, c);
+    S.pool = { plans: r.plans, hosts: r.hosts };
+    refreshSideViews();
+  } catch { /* pooling is optional */ }
+}
+function poolLabels() {
+  const all = [{ id: S.plan.id, name: S.plan.name, ownerName: S.plan.ownerName }, ...S.pool.plans];
+  const owners = all.map((p) => p.ownerName);
+  const unique = new Set(owners).size === owners.length;
+  return new Map(all.map((p) => [p.id, unique ? String(p.ownerName).split(/\s+/)[0] : p.name]));
+}
 const seedKey = (cropId, variety) => `${cropId}|${(variety || '').trim().toLowerCase()}`;
 function seedNeeds() {
   const m = new Map();
-  for (const r of plantTally()) if (r.crop.id) m.set(seedKey(r.crop.id, r.variety), { crop: r.crop, variety: r.variety, plants: r.plants });
+  const labels = S.pool.plans.length ? poolLabels() : null;
+  const add = (items, mode, planId) => {
+    for (const it of items) {
+      if (it.type !== 'crop') continue;
+      const c = S.crops.get(it.cropId); if (!c) continue;
+      const variety = (it.props?.variety || '').trim();
+      const k = seedKey(c.id, variety);
+      const e = m.get(k) || { crop: c, variety, plants: 0, by: new Map() };
+      const n = plantGrid(it, mode).count;
+      e.plants += n;
+      if (labels) { const l = labels.get(planId); e.by.set(l, (e.by.get(l) || 0) + n); }
+      m.set(k, e);
+    }
+  };
+  add(S.items.values(), S.plan.mode, S.plan.id);
+  for (const p of S.pool.plans) add(p.items, p.mode, p.id);
   return m;
 }
 function saveSeeds(rows) {
@@ -1201,7 +1237,8 @@ function renderSeeds() {
   const rows = [...S.seeds.values()].map((r) => {
     const c = S.crops.get(r.cropId) || cropOf({});
     const win = seedWindow(c, r.method);
-    return { r, c, win, need: needs.get(seedKey(r.cropId, r.variety))?.plants ?? null };
+    const n = needs.get(seedKey(r.cropId, r.variety));
+    return { r, c, win, need: n?.plants ?? null, by: n?.by };
   }).sort((a, b) => (a.win?.[0] ?? Infinity) - (b.win?.[0] ?? Infinity) || a.c.name.localeCompare(b.c.name) || (a.r.variety || '').localeCompare(b.r.variety || ''));
   const have = new Set([...S.seeds.values()].map((r) => seedKey(r.cropId, r.variety)));
   const missing = [...needs.entries()].filter(([k]) => !have.has(k)).map(([, n]) => n);
@@ -1225,7 +1262,11 @@ function renderSeeds() {
   const varOpts = (cropId) => [...new Set([...S.items.values()].filter((i) => i.cropId === cropId && i.props?.variety).map((i) => i.props.variety))];
   pane.innerHTML = `<div class="sheet wide"><div class="sheet-head"><div><h2>Seed starting</h2><p>${esc(S.plan.name)} · how many of each variety to sow, and how they're doing</p></div>
     <div class="btn-row">${dis ? '' : '<button class="btn" id="seedFromLayout">Add from layout</button><button class="btn primary" id="seedAdd">Add a variety</button>'}<button class="btn" id="seedCsv">Download CSV</button><button class="btn" id="seedPrint">Print</button></div></div>
-    ${missing.length && !dis ? `<div class="callout"><span>${missing.length} planting${missing.length === 1 ? '' : 's'} in your layout ${missing.length === 1 ? "isn't" : "aren't"} on this list yet: ${missing.slice(0, 4).map((n) => esc(n.crop.name + (n.variety ? ` ‘${n.variety}’` : ''))).join(', ')}${missing.length > 4 ? '…' : ''}</span><button class="btn" id="seedFromLayout2">Add them</button></div>` : ''}
+    ${S.pool.hosts.length ? `<div class="callout" style="background:var(--leaf-soft)"><span>This garden's plants are also counted in the pooled seed list for ${S.pool.hosts.map((h) => `<button class="linkish" data-open-plan="${esc(h.id)}">${esc(h.name)}</button> (${esc(h.ownerName)})`).join(', ')}.</span></div>` : ''}
+    <div class="pool-bar"><span class="lib-meta">${S.pool.plans.length ? 'Seeds pooled for:' : 'Starting seeds for someone else too?'}</span>
+      ${S.pool.plans.length ? `<span class="tag">${esc(S.plan.name)}</span>${S.pool.plans.map((p) => `<span class="tag" title="${esc(p.ownerName)}">${esc(p.name)} · ${esc(p.ownerName)}</span>`).join('')}` : ''}
+      ${dis ? '' : `<button class="linkish" id="poolBtn">${S.pool.plans.length ? 'Change' : 'Pool with another garden'}</button>`}</div>
+    ${missing.length && !dis && !(S.pool.hosts.length && !rows.length) ? `<div class="callout"><span>${missing.length} planting${missing.length === 1 ? '' : 's'} in your layout ${missing.length === 1 ? "isn't" : "aren't"} on this list yet: ${missing.slice(0, 4).map((n) => esc(n.crop.name + (n.variety ? ` ‘${n.variety}’` : ''))).join(', ')}${missing.length > 4 ? '…' : ''}</span><button class="btn" id="seedFromLayout2">Add them</button></div>` : ''}
     ${rows.length ? `<div class="seed-stats">
       <div><b>${rows.length}</b><span>varieties</span></div>
       <div><b>${tot.sow}</b><span>seeds to sow</span></div>
@@ -1238,8 +1279,8 @@ function renderSeeds() {
       <td><span class="row" style="gap:8px;justify-content:flex-start;white-space:nowrap"><span class="lib-icon" style="flex:0 0 26px;width:26px;height:26px;font-size:14px;background:${esc(c.color)}22">${esc(c.icon)}</span>${esc(c.name)}</span></td>
       <td><input class="var" type="text" data-k="variety" value="${esc(r.variety)}" placeholder="Variety" maxlength="60" ${vo.length ? `list="vl_${esc(r.id)}"` : ''} ${dis}>${vo.length ? `<datalist id="vl_${esc(r.id)}">${vo.map((v) => `<option value="${esc(v)}">`).join('')}</datalist>` : ''}</td>
       <td><select data-k="method" ${dis}>${Object.entries(METHOD_LABEL).map(([k, v]) => `<option value="${k}" ${r.method === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
-      <td class="r num">${x.need ?? '—'}</td>
-      <td class="r"><input type="number" min="0" data-k="sow" value="${r.sow ?? ''}" ${dis}></td>
+      <td class="r num">${x.need ?? '—'}${x.by && x.by.size > 1 ? `<br><small class="lib-meta" style="white-space:nowrap">${[...x.by].map(([l, n]) => `${esc(l)} ${n}`).join(' · ')}</small>` : ''}</td>
+      <td class="r"><input type="number" min="0" data-k="sow" value="${r.sow ?? ''}" ${dis}>${!dis && x.need && !r.sownDate && (r.sow ?? 0) < x.need ? `<br><button class="linkish" style="font-size:12px" data-suggest="${defaultSow(x.need, r.method)}" title="Fewer than needed">Use ${defaultSow(x.need, r.method)}</button>` : ''}</td>
       <td>${winHtml(x)}</td>
       <td>${r.method === 'buy' ? '' : `<input type="date" data-k="sownDate" value="${esc(r.sownDate || '')}" ${dis}>`}</td>
       <td class="r">${r.method === 'buy' ? '' : `<input type="number" min="0" data-k="germinated" value="${r.germinated ?? ''}" ${dis}>`}</td>
@@ -1249,9 +1290,12 @@ function renderSeeds() {
       <td>${dis ? '' : `<button class="btn ghost icon" data-del aria-label="Remove ${esc(c.name)}">✕</button>`}</td></tr>`; }).join('')}
     </tbody></table></div>
     <p class="lib-meta" style="margin:12px 0 0">“Needed” counts plants of that plant and variety in the layout. New rows suggest sowing about 30% extra to allow for seeds that don't sprout. Set a planting's variety in the layout's side panel to match it here.</p>`
+    : S.pool.hosts.length ? `<div class="empty"><h2>Seeds for this garden are tracked elsewhere</h2><p>Its plants are counted in the pooled list for ${S.pool.hosts.map((h) => esc(h.name)).join(', ')}. You can still keep your own list here.</p><p><button class="btn primary" data-open-plan="${esc(S.pool.hosts[0].id)}">Open ${esc(S.pool.hosts[0].name)}</button></p></div>`
     : `<div class="empty"><h2>Track your seed starting</h2><p>${needs.size ? 'Pull in every plant and variety from your layout with the number of seeds to sow, or add varieties one at a time.' : 'Add the varieties you plan to start. Plants you place in the layout can be pulled in here too.'}</p>${dis ? '' : `<p>${needs.size ? '<button class="btn primary" id="seedFromLayout3">Add from layout</button> ' : ''}<button class="btn" id="seedAdd2">Add a variety</button></p>`}</div>`}</div>`;
   ['#seedFromLayout', '#seedFromLayout2', '#seedFromLayout3'].forEach((id) => $(id, pane)?.addEventListener('click', addSeedsFromLayout));
   ['#seedAdd', '#seedAdd2'].forEach((id) => $(id, pane)?.addEventListener('click', () => seedDialog()));
+  $('#poolBtn', pane)?.addEventListener('click', poolDialog);
+  pane.querySelectorAll('[data-open-plan]').forEach((b) => b.addEventListener('click', () => openPlan(b.dataset.openPlan)));
   $('#seedPrint', pane).addEventListener('click', () => window.print());
   pane.querySelector('[data-act="frost"]')?.addEventListener('click', () => planDialog(S.plan));
   $('#seedCsv', pane).addEventListener('click', () => {
@@ -1268,7 +1312,33 @@ function renderSeeds() {
       saveSeeds([r]);
       seedsDirty = true; // re-render once focus leaves the table
     }));
+    tr.querySelector('[data-suggest]')?.addEventListener('click', (e) => { saveSeeds([{ ...S.seeds.get(id), sow: Number(e.target.dataset.suggest) }]); renderSeeds(); });
     tr.querySelector('[data-del]')?.addEventListener('click', () => { deleteSeeds([id]); renderSeeds(); });
+  });
+}
+async function poolDialog() {
+  await loadPlans().catch(() => {});
+  const inPool = new Set(S.pool.plans.map((p) => p.id));
+  const others = S.plans.filter((p) => p.id !== S.plan.id);
+  // pooled gardens this user can no longer open still count; keep them listed
+  const hidden = S.pool.plans.filter((p) => !others.some((o) => o.id === p.id));
+  const row = (p, owner) => `<label class="plan-row" style="cursor:pointer"><span><b>${esc(p.name)}</b><small>${esc(owner)}</small></span><input type="checkbox" value="${esc(p.id)}" ${inPool.has(p.id) ? 'checked' : ''}></label>`;
+  const d = modal({
+    title: 'Pool seed starting',
+    body: `<p style="margin-top:0">Count plants from other gardens on this Seeds list, so one person can start seeds for everyone. Each garden's plants show up as a separate count beside the total.</p>
+      ${others.length || hidden.length ? `<div class="plan-list">${others.map((p) => row(p, p.role === 'owner' ? 'Your garden' : `${p.ownerName}'s garden`)).join('')}${hidden.map((p) => row(p, `${p.ownerName}'s garden`)).join('')}</div>`
+        : '<p class="lib-meta">No other gardens to pool yet.</p>'}
+      <p class="lib-meta" style="margin:14px 0 0">Don't see someone's garden? Ask them to share it with you from their plan's <b>Share</b> button. View access is enough.</p><p class="error" id="poolErr"></p>`,
+    foot: '<button class="btn" data-close>Cancel</button><button class="btn primary" id="poolSave">Save</button>',
+  });
+  $('#poolSave', d).addEventListener('click', async () => {
+    const planIds = [...d.querySelectorAll('input[type=checkbox]:checked')].map((c) => c.value);
+    try {
+      const r = await api('PUT', `/api/plans/${S.plan.id}/pool`, { planIds });
+      for (const c of r.crops) S.crops.set(c.id, c);
+      S.pool = { plans: r.plans, hosts: r.hosts }; d.close(); renderSeeds();
+      toast(planIds.length ? `Seeds pooled with ${planIds.length} garden${planIds.length === 1 ? '' : 's'}` : 'Pooling turned off');
+    } catch (e) { $('#poolErr', d).textContent = e.message; }
   });
 }
 function seedDialog() {

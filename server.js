@@ -216,6 +216,14 @@ function broadcast(planId, event, data) {
   if (!set) return;
   for (const c of set) sseWrite(c, event, data);
 }
+const poolNotifyTimers = new Map();
+function notifyPoolHosts(planId) {
+  if (poolNotifyTimers.has(planId)) return; // coalesce bursts (e.g. dragging)
+  poolNotifyTimers.set(planId, setTimeout(() => {
+    poolNotifyTimers.delete(planId);
+    for (const r of db.prepare('SELECT host_plan_id FROM seed_pool WHERE plan_id = ?').all(planId)) broadcast(r.host_plan_id, 'pool-changed', { planId });
+  }, 800));
+}
 function presence(planId) {
   const set = hub.get(planId);
   const seen = new Map();
@@ -509,6 +517,7 @@ route('PUT', '/api/plans/:id', async (ctx) => {
     .run(f.name, f.width, f.height, f.last_frost, f.first_frost, f.mode, f.snap, f.notes, f.year, f.zip, f.zone, f.place, now(), ex.id);
   const plan = loadPlan(ex.id, role);
   broadcast(ex.id, 'plan', { plan: { ...plan, role: undefined }, by: ctx.user.id, clientId: str(body.clientId, 64) });
+  notifyPoolHosts(ex.id);
   return { plan };
 });
 
@@ -583,6 +592,7 @@ route('POST', '/api/plans/:id/items', async (ctx) => {
   const out = items.map((it) => ({ id: it.id, type: it.type, cropId: it.cropId, x: it.x, y: it.y, w: it.w, h: it.h, z: it.z, props: JSON.parse(it.props), updatedBy: ctx.user.id, updatedAt: t }));
   for (const crop of newCrops.values()) broadcast(planId, 'crop', { crop });
   broadcast(planId, 'items', { items: out, by: ctx.user.id, clientId: str(body.clientId, 64) });
+  notifyPoolHosts(planId);
   return { items: out };
 });
 
@@ -595,6 +605,7 @@ route('POST', '/api/plans/:id/items/delete', async (ctx) => {
   try { for (const id of ids) del.run(id, ctx.params.id); db.prepare('UPDATE plans SET updated_at = ? WHERE id = ?').run(now(), ctx.params.id); db.exec('COMMIT'); }
   catch (e) { db.exec('ROLLBACK'); throw e; }
   broadcast(ctx.params.id, 'delete', { ids, by: ctx.user.id, clientId: str(body.clientId, 64) });
+  notifyPoolHosts(ctx.params.id);
   return { ok: true };
 });
 
@@ -644,6 +655,48 @@ route('POST', '/api/plans/:id/seeds/delete', async (ctx) => {
   for (const id of ids) del.run(id, ctx.params.id);
   broadcast(ctx.params.id, 'seeds-delete', { ids, clientId: str(body.clientId, 64) });
   return { ok: true };
+});
+
+// --- seed pooling: one seed-starting list covering several gardens
+function poolData(hostId, user) {
+  const plans = db.prepare(`SELECT p.*, u.display_name AS owner_name FROM seed_pool sp JOIN plans p ON p.id = sp.plan_id
+    JOIN users u ON u.id = p.owner_id WHERE sp.host_plan_id = ? ORDER BY u.display_name, p.name`).all(hostId);
+  const itemsQ = db.prepare(`SELECT * FROM items WHERE plan_id = ? AND type = 'crop'`);
+  const crops = new Map();
+  const cropQ = db.prepare(`SELECT c.* FROM crops c WHERE c.builtin = 0 AND c.id IN (SELECT crop_id FROM items WHERE plan_id = ?)`);
+  const out = plans.map((p) => {
+    for (const c of cropQ.all(p.id)) crops.set(c.id, cropJson(c));
+    return { id: p.id, name: p.name, ownerName: p.owner_name, ownerId: p.owner_id, mode: p.mode, canOpen: !!getPlanRole(p.id, user.id), items: itemsQ.all(p.id).map(itemJson) };
+  });
+  // gardens that pool THIS plan (so its seeds are started elsewhere)
+  const hosts = db.prepare(`SELECT p.id, p.name, u.display_name AS owner_name FROM seed_pool sp JOIN plans p ON p.id = sp.host_plan_id
+    JOIN users u ON u.id = p.owner_id WHERE sp.plan_id = ?`).all(hostId)
+    .filter((h) => getPlanRole(h.id, user.id)).map((h) => ({ id: h.id, name: h.name, ownerName: h.owner_name }));
+  return { plans: out, crops: [...crops.values()], hosts };
+}
+route('GET', '/api/plans/:id/pool', (ctx) => {
+  requirePlan(ctx.params.id, ctx.user);
+  return poolData(ctx.params.id, ctx.user);
+});
+route('PUT', '/api/plans/:id/pool', async (ctx) => {
+  const hostId = ctx.params.id;
+  requirePlan(hostId, ctx.user, 'editor');
+  const body = await readJson(ctx.req);
+  const want = new Set((Array.isArray(body.planIds) ? body.planIds : []).filter((x) => typeof x === 'string' && x !== hostId).slice(0, 50));
+  const current = new Set(db.prepare('SELECT plan_id FROM seed_pool WHERE host_plan_id = ?').all(hostId).map((r) => r.plan_id));
+  db.exec('BEGIN');
+  try {
+    for (const id of current) if (!want.has(id)) db.prepare('DELETE FROM seed_pool WHERE host_plan_id = ? AND plan_id = ?').run(hostId, id);
+    for (const id of want) {
+      if (current.has(id)) continue;
+      if (!getPlanRole(id, ctx.user.id)) throw new HttpError(403, 'You can only pool gardens you have access to');
+      db.prepare('INSERT INTO seed_pool (host_plan_id, plan_id, added_by) VALUES (?, ?, ?)').run(hostId, id, ctx.user.id);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  broadcast(hostId, 'pool-changed', { planId: null });
+  for (const id of new Set([...want, ...current])) broadcast(id, 'pool-changed', { planId: hostId });
+  return poolData(hostId, ctx.user);
 });
 
 // Lightweight ephemeral channel: cursors / selection highlights (not stored).
