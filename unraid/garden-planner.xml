@@ -1,17 +1,17 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>garden-planner</Name>
-  <Repository>ghcr.io/YOUR_GITHUB_USERNAME/garden-planner:latest</Repository>
-  <Registry>https://github.com/YOUR_GITHUB_USERNAME/garden-planner/pkgs/container/garden-planner</Registry>
+  <Repository>ghcr.io/trev9575/garden-planner:latest</Repository>
+  <Registry>https://github.com/trev9575/garden-planner/pkgs/container/garden-planner</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/YOUR_GITHUB_USERNAME/garden-planner/issues</Support>
-  <Project>https://github.com/YOUR_GITHUB_USERNAME/garden-planner</Project>
+  <Support>https://github.com/trev9575/garden-planner/issues</Support>
+  <Project>https://github.com/trev9575/garden-planner</Project>
   <Overview>Self-hosted garden layout planner. Draw beds, place crops at real spacing, see a planting calendar from your frost dates, and plan together with live updates. Multiple user accounts; the first account created becomes the admin.</Overview>
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:3000]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/garden-planner/main/public/favicon.svg</Icon>
+  <Icon>https://raw.githubusercontent.com/trev9575/garden-planner/main/public/favicon.svg</Icon>
   <Config Name="Web UI port" Target="3000" Default="3000" Mode="tcp" Description="Port for the web interface" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/garden-planner" Mode="rw" Description="Database (garden.db) lives here. Back this folder up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/garden-planner</Config>
   <Config Name="Allow self sign-up" Target="ALLOW_REGISTRATION" Default="true" Mode="" Description="true lets anyone who can reach the page create an account. The admin can change this later in the app." Type="Variable" Display="always" Required="false" Mask="false">true</Config>

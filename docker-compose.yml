@@ -1,6 +1,6 @@
 services:
   garden-planner:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/garden-planner:latest
+    image: ghcr.io/trev9575/garden-planner:latest
     # or build from source instead of pulling:
     # build: .
     container_name: garden-planner

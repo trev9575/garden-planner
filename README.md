@@ -29,16 +29,16 @@ git init -b main
 git add .
 git commit -m "Garden Planner"
 # create an empty repo called garden-planner on github.com first, then:
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/garden-planner.git
+git remote add origin https://github.com/trev9575/garden-planner.git
 git push -u origin main
 ```
 
 Every push to `main` runs **.github/workflows/docker.yml**, which builds the image for amd64 and arm64 and publishes it to
-`ghcr.io/YOUR_GITHUB_USERNAME/garden-planner:latest`.
+`ghcr.io/trev9575/garden-planner:latest`.
 
 > The first time it builds, open your GitHub profile → **Packages → garden-planner → Package settings** and set visibility to **Public** so Unraid can pull it without logging in.
 
-Replace `YOUR_GITHUB_USERNAME` in `unraid/garden-planner.xml` and `docker-compose.yml` with your username.
+Replace `trev9575` in `unraid/garden-planner.xml` and `docker-compose.yml` with your username.
 
 ## 2. Install on Unraid
 
@@ -53,7 +53,7 @@ Docker → Add Container:
 
 | Field | Value |
 |---|---|
-| Repository | `ghcr.io/YOUR_GITHUB_USERNAME/garden-planner:latest` |
+| Repository | `ghcr.io/trev9575/garden-planner:latest` |
 | Port | container `3000` → host `3000` (or any free port) |
 | Path | container `/data` → host `/mnt/user/appdata/garden-planner` |
 | Variable (optional) | `ALLOW_REGISTRATION` = `true` or `false` |
